@@ -41,9 +41,7 @@ import sys
 
 import json as json_module
 import binascii
-import os 
-
-
+import os
 
 if sys.implementation.name == "circuitpython":
 
@@ -588,7 +586,7 @@ class Session:
             self._send(socket, bytes(host, "utf-8"))
             self._send(socket, b"\r\n")
         if "User-Agent" not in headers:
-            self._send(socket, b"User-Agent: Adafruit CircuitPython/1.0\r\n")
+            self._send(socket, b"User-Agent: Adafruit CircuitPython\r\n")
         # Iterate over keys to avoid tuple alloc
         for k in headers:
             self._send(socket, k.encode())
@@ -611,6 +609,7 @@ class Session:
             if isinstance(data, str):
                 data = bytes(data, "utf-8")
             self._send(socket, b"Content-Length: %d\r\n" % len(data))
+        self._send(socket, b"\r\n")
         
         if data:
             self._send(socket, bytes(data))
@@ -626,7 +625,6 @@ class Session:
             files = list(files)
             
             content_length = 0
-            
             for (k,v) in files:
                 fn, fp, ft = v
                 content_length += len( ( b'--' + boundary + b'\r\n' ) )
@@ -836,9 +834,9 @@ def set_socket(
     if not iface:
         # pylint: disable=protected-access
         _default_session = Session(sock, _FakeSSLContext(sock._the_interface))
-        sock.set_interface(iface)
     else:
         _default_session = Session(sock, _FakeSSLContext(iface))
+    sock.set_interface(iface)
 
 
 def request(
