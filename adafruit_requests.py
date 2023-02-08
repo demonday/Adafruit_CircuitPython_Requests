@@ -40,6 +40,10 @@ import errno
 import sys
 
 import json as json_module
+import binascii
+import os 
+
+
 
 if sys.implementation.name == "circuitpython":
 
@@ -572,6 +576,7 @@ class Session:
         headers: Dict[str, str],
         data: Any,
         json: Any,
+        files: Any
     ):
         # pylint: disable=too-many-arguments
         self._send(socket, bytes(method, "utf-8"))
@@ -583,7 +588,7 @@ class Session:
             self._send(socket, bytes(host, "utf-8"))
             self._send(socket, b"\r\n")
         if "User-Agent" not in headers:
-            self._send(socket, b"User-Agent: Adafruit CircuitPython\r\n")
+            self._send(socket, b"User-Agent: Adafruit CircuitPython/1.0\r\n")
         # Iterate over keys to avoid tuple alloc
         for k in headers:
             self._send(socket, k.encode())
@@ -606,10 +611,61 @@ class Session:
             if isinstance(data, str):
                 data = bytes(data, "utf-8")
             self._send(socket, b"Content-Length: %d\r\n" % len(data))
-        self._send(socket, b"\r\n")
+        
         if data:
             self._send(socket, bytes(data))
 
+        if files:
+            #print("Sending files...")
+            boundary = b''+ b'------------------------' + binascii.hexlify(os.urandom(8))            
+            self._send(socket, b"Accept: */*\r\n")
+            self._send(socket, b'Content-Type: multipart/form-data; boundary=' + boundary + b'\r\n')
+            
+            #TODO: Multiple files key: 3-tuples (filename, fileobj, contentype)
+            files = files.items()
+            files = list(files)
+            
+            content_length = 0
+            
+            for (k,v) in files:
+                fn, fp, ft = v
+                content_length += len( ( b'--' + boundary + b'\r\n' ) )
+                content_length += ( len('Content-Disposition: form-data; name="%s"; filename="%s"' % (k,fn)) + 2 )
+                content_type = 'Content-Type: application/octet-stream' if ft is None else 'Content-Type: '+ft
+                content_length += ( len(content_type) + 2  )
+                content_length += ( ( 2 + os.path.getsize(fn) + 2 ) )
+                content_length += ( len(b'--' + boundary + b'--\r\n') )
+                #print("CL: " + str(content_length))
+            
+            self._send(socket, b"Content-Length: %d\r\n" % content_length)
+            self._send(socket, b"\r\n")
+            
+            CHUNK_SIZE=256
+            
+            for (k,v) in files:
+                fn, fp, ft = v
+                file_size = os.path.getsize(fn)
+                #print("Filesize: " + str(file_size))
+                self._send(socket, b'--' + boundary + b'\r\n')
+                content_disp = 'Content-Disposition: form-data; name="%s"; filename="%s"' % (k,fn)
+                self._send(socket, content_disp.encode() + b'\r\n')
+                content_type = 'Content-Type: application/octet-stream' if ft is None else 'Content-Type: '+ft
+                self._send(socket, content_type.encode() + b'\r\n')
+                self._send(socket, b"\r\n")
+                
+                bytes_remaining=file_size
+                while bytes_remaining > 0:
+                    if bytes_remaining > CHUNK_SIZE:
+                         self._send(socket, fp.read(CHUNK_SIZE))
+                         bytes_remaining -= CHUNK_SIZE
+                    else:
+                        self._send(socket, fp.read(bytes_remaining))
+                        bytes_remaining = 0
+                    print("Left to send: " + str(bytes_remaining))
+                        
+                self._send(socket, b"\r\n")
+                self._send(socket, b'--' + boundary + b'--\r\n')
+                        
     # pylint: disable=too-many-branches, too-many-statements, unused-argument, too-many-arguments, too-many-locals
     def request(
         self,
@@ -619,6 +675,7 @@ class Session:
         json: Optional[Any] = None,
         headers: Optional[Dict[str, str]] = None,
         stream: bool = False,
+        files: dict[Any] = None,
         timeout: float = 60,
     ) -> Response:
         """Perform an HTTP request to the given url which we will parse to determine
@@ -661,7 +718,7 @@ class Session:
             socket = self._get_socket(host, port, proto, timeout=timeout)
             ok = True
             try:
-                self._send_request(socket, host, method, path, headers, data, json)
+                self._send_request(socket, host, method, path, headers, data, json, files)
             except OSError as exc:
                 last_exc = exc
                 ok = False
@@ -779,9 +836,9 @@ def set_socket(
     if not iface:
         # pylint: disable=protected-access
         _default_session = Session(sock, _FakeSSLContext(sock._the_interface))
+        sock.set_interface(iface)
     else:
         _default_session = Session(sock, _FakeSSLContext(iface))
-    sock.set_interface(iface)
 
 
 def request(
